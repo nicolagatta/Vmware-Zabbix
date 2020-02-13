@@ -1,0 +1,105 @@
+function MyGetESXInfo  {
+        param($Hostname)
+
+    $Response= New-Object PSObject
+        $esx=(Get-VMHost -name  $Hostname)
+
+    # Get basic information on the Host
+        #Get-VMHost -Name $Hostname  | Select-Object -Property  PowerState,Version,CpuUsageMhz,CpuTotalMhz,MemoryUsageGB,MemoryTotalGB | ft
+        (Get-VMHost -Name $Hostname  | Select-Object -Property  PowerState,Version,CpuUsageMhz,CpuTotalMhz,MemoryUsageGB,MemoryTotalGB).properties
+#    foreach ( $property in @("PowerState" , "Version","CpuUsageMhz","CpuTotalMhz","MemoryUsageGB","MemoryTotalGB"))
+#    {
+#        write-output $property : $esx.$property
+#    }
+
+    Add-member -InputObject $Response –MemberType NoteProperty -Name PowerState -value ($esx  | Select -Property Powerstate).PowerState
+    Add-member -InputObject $Response –MemberType NoteProperty -Name Version -value ($esx  | Select -Property Version).Version
+    Add-member -InputObject $Response –MemberType NoteProperty -Name CpuUsageMhz -value ($esx  | Select -Property CpuUsageMhz).CpuUsageMhz.ToString()
+    Add-member -InputObject $Response –MemberType NoteProperty -Name CpuTotalMhz -value ($esx  | Select -Property CpuTotalMhz ).CpuTotalMhz.ToString()
+    Add-member -InputObject $Response –MemberType NoteProperty -Name MemoryUsageGB -value ($esx  | Select -Property MemoryUsageGB).MemoryUsageGB.ToString()
+    Add-member -InputObject $Response –MemberType NoteProperty -Name MemoryTotalGB -value ($esx  | Select -Property MemoryTotalGB).MemoryTotalGB.ToString()
+
+        Add-member -InputObject $Response –MemberType NoteProperty -Name VMCount -Value $esx.ExtensionData.Vm.Count.ToString()
+    Add-member -InputObject $Response –MemberType NoteProperty -Name OverAllStatus -Value $esx.ExtensionData.OverAllStatus
+    Add-member -InputObject $Response –MemberType NoteProperty -Name DatastoreCount -Value  $esx.ExtensionData.Datastore.Count.ToString()
+
+    Add-member -InputObject $Response –MemberType NoteProperty -Name NumCpuPackages -value $esx.ExtensionData.Hardware.CpuInfo.NumCpuPackages.ToString()
+    Add-member -InputObject $Response –MemberType NoteProperty -Name NumCpucores -value $esx.ExtensionData.Hardware.CpuInfo.NumCpucores.ToString()
+    Add-member -InputObject $Response –MemberType NoteProperty -Name NumCpuThreads -value $esx.ExtensionData.Hardware.CpuInfo.NumCpuThreads.ToString()
+    Add-member -InputObject $Response –MemberType NoteProperty -Name Hz -value    $esx.ExtensionData.Hardware.CpuInfo.Hz.ToString()
+
+    Add-member -InputObject $Response –MemberType NoteProperty -Name TotalVCPU -value ( $esx | Get-VM |  Measure-Object   -property NumCpu -sum | Select -expand Sum).ToString()
+
+    # get Maximum value of CPUwait from virtual machines. This must be scaled by a factor related to the Stat time
+    # interval. In the case of Realtime it must be scaled by 200 as per KB2002181 (https://kb.vmware.com/s/article/2002181)
+    # This means that alerts should be put whenever this value > 2000
+    Add-member -InputObject $Response –MemberType NoteProperty -Name  CPUWait -value (($esx | Get-Vm  | get-stat   -Realtime -Stat cpu.ready.summation -Maxsamples 1 2>$null | where { $_.Instance -eq "" } | Measure-Object -property   Value -Maximum).maximum).ToString()
+
+        # Memory metrics
+        # mem.vmmemctl.average = MCTLSZ (Alert on >0)
+        # mem.swapused.average = SWCUR (Alert on >0 )
+        # mem.swapin.average = SWR/s (Alert on > 0)
+        # mem.swapout.average = SWW/s (Alert on > 0)
+
+    $stat=(Get-Stat -Entity $esx -Memory -Realtime -Stat  mem.swapused.average,mem.vmmemctl.average,mem.swapin.average,mem.swapout.average -MaxSamples 1   | where {   $_.MetricId -like "mem.*.average"})
+    $stat | %{ Add-member -InputObject $Response –MemberType NoteProperty -Name $_.MetricId.replace('.','_') -value  $_.value.ToString()}
+    
+        # Get Datastore Data:
+        # - capacity and Freespace
+        # - VMFS Version
+        # - Latency bus resets and command abortion of the LUN backing the Datastore
+
+        Get-Datastore|  ForEach-Object -Process  {
+            $LUN_NAME=($_.ExtensionData.Info.Vmfs.Extent[0].DiskName);
+            $DSName=$_.Name.replace('-','_')
+            Add-member -InputObject $Response –MemberType NoteProperty -Name ${DSName}_FreeSpaceGB  -value $_.FreeSpaceGB.ToString()
+            Add-member -InputObject $Response –MemberType NoteProperty -Name ${DSName}_CapacityGB -value $_.CapacityGB.ToString()
+            Add-member -InputObject $Response –MemberType NoteProperty -Name ${DSName}_VMFSVersion -value $_.FileSystemVersion
+            $stat=(Get-Stat -Entity $esx -MaxSamples 1 -Realtime -Stat disk.devicelatency.average,disk.kernellatency.average,disk.QueueLatency.average,disk.commandsAborted.summation,disk.busresets.summation | where {$_.instance -eq  $LUN_NAME})
+        $stat  | %{ Add-member -InputObject $Response –MemberType NoteProperty -Name (${DSName}+'_'+$_.MetricId.replace('.','_')) -value $_.value.ToString()}
+    }
+
+    return $Response
+
+}
+
+import-Module VMware.PowerCLI
+
+Set-PowerCLIConfiguration  -InvalidCertificateAction Ignore -Confirm:$false
+
+$Username=(Get-Content -Path $args[0] -TotalCount 2)[0]
+$Password=(Get-Content -Path $args[0] -TotalCount 2)[1]
+
+Connect-VIServer -Server pr-vcenter.gruppoab.lan -User $Username -Password $Password
+
+$url = 'http://localhost:12081/'
+
+# start web server
+$listener = New-Object System.Net.HttpListener
+$listener.Prefixes.Add($url)
+$listener.Start()
+
+try
+{
+  while ($listener.IsListening) {
+    # process received request
+    $context = $listener.GetContext()
+    $Request = $context.Request
+    $Response = $context.Response
+
+    if ( $Request.httpmethod -eq "GET") {
+        $html=(MyGetESXInfo $Request.url.localpath.TrimStart('/') | convertto-json -AsArray)
+    }
+
+    $buffer = [Text.Encoding]::UTF8.GetBytes($html)
+    $Response.ContentLength64 = $buffer.length
+    $Response.OutputStream.Write($buffer, 0, $buffer.length)
+
+    $Response.Close()
+  }
+}
+finally
+{
+  $listener.Stop()
+}
+
