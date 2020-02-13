@@ -5,11 +5,11 @@ The template is designed with these assumptions
 - there are three datastores
 
 The script is designed to 
-- it connects to the vcenter with powercli and stay connected for performance reasons (no need to run many Connect-VIServer)
-- it listens on localhost:port 
-- it accepts GET /ESXhostname 
+- connect to the vcenter with powercli and stay connected for performance reasons (no need to run many Connect-VIServer)
+- listen on localhost:
+- accept request "GET /ESXhostname"
 - Each GET request takes around 3 seconds to run on my systems:. Since the script it's not multithreaded, running multiple requests at the same time can result in some wait
-- it outputs the Performance metric in a JSON format like this:
+- output the Performance metric in a JSON format like this:
 	
 [
   {
@@ -63,9 +63,10 @@ The script is designed to
 ]
 
  
-  
+
 The zabbix template uses an external command like a shell script that executes "wget -qO - http://localhost:port/esxhostname" to get the JSON output.
 Then it populates the items using JSON preprocessing
+
 For performance metrics I tried to use metrics and thresholds according to some great articles
 - http://www.yellow-bricks.com/esxtop/
 - http://www.lucd.info/2010/01/13/powercli-vsphere-statistics-part-3-instances/
