@@ -1,5 +1,5 @@
 # Vmware Monitoring with PowerCLI and Zabbix
-This is an short and dirty zabbix template with a powershell script to get performance metric
+This is a short and dirty zabbix template with a powershell script to get performance metric
 
 The template is designed with these assumptions
 - a single host managed by a virtual center
