@@ -60,7 +60,7 @@ Set-PowerCLIConfiguration  -InvalidCertificateAction Ignore -Confirm:$false
 $Username=(Get-Content -Path $args[0] -TotalCount 2)[0]
 $Password=(Get-Content -Path $args[0] -TotalCount 2)[1]
 
-Connect-VIServer -Server pr-vcenter.gruppoab.lan -User $Username -Password $Password
+Connect-VIServer -Server vcenter -User $Username -Password $Password
 
 # WEB server base URL
 $url = 'http://localhost:12081/'
